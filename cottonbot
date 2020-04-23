@@ -1,0 +1,193 @@
+script_name("Cotton Bot v1.31")
+script_author("L1ct0r")
+
+local found,finding,active = false,false,false
+local ax,ay,tid,fx,fy,lap,timer = 0,0,0,0,0,0,0
+local matches,fmatches = {},{}
+
+local key = require 'vkeys'
+local imgui = require 'imgui'
+local encoding = require 'encoding'
+encoding.default = 'CP1251'
+u8 = encoding.UTF8
+
+show_main_window = imgui.ImBool(false)
+jump_run = imgui.ImBool(true)
+clctln = imgui.ImBool(true)
+clctctn = imgui.ImBool(true)
+show_stats = imgui.ImBool(false)
+
+function imgui.OnDrawFrame()
+	if show_main_window.v then
+		local sw, sh = getScreenResolution()
+		imgui.SetNextWindowPos(imgui.ImVec2(sw / 2, sh / 2), imgui.Cond.FirstUseEver, imgui.ImVec2(0.5, 0.5))
+		imgui.SetNextWindowSize(imgui.ImVec2(sw/2, sh/2), imgui.Cond.FirstUseEver)
+		imgui.Begin(u8'Настройки бота хлопка/льна', show_main_window)
+		if imgui.Checkbox(u8"Бежать прыгая", jump_run) then end 
+		if imgui.Checkbox(u8"Собирать лён", clctln) then end 
+		if imgui.Checkbox(u8"Собирать хлопок", clctctn) then end 
+		if imgui.Checkbox(u8"Показывать статистику", show_stats) then end
+		imgui.End()
+	end
+	if show_stats.v then
+		local sw, sh = getScreenResolution()
+		imgui.SetNextWindowPos(imgui.ImVec2(sw / 2 - sw / 2.75, sh / 2), imgui.Cond.FirstUseEver, imgui.ImVec2(0.5, 0.5))
+		imgui.SetNextWindowSize(imgui.ImVec2(sw/7, sh/4), imgui.Cond.FirstUseEver)
+		imgui.Begin(u8'Статистика', show_stats)
+		imgui.End()
+	end
+end
+
+function mode(arg)
+	active = not active
+	if active then
+		sampAddChatMessage("[ARZ] Бот включен!",-255)
+	else
+		sampAddChatMessage("[ARZ] Бот выключен!",-255)
+	end
+end
+
+function laps(arg)
+	if #arg == 0 then
+		sampAddChatMessage("Неправильный синтаксис команды! Попробуйте /botcc [int laps]",-255)
+	else
+		lap = arg
+		sampAddChatMessage("[ARZ] Кол-во кругов установлено на "..arg.."!",-255)
+	end
+end
+
+function showupmenu(arg)
+	show_main_window.v = not show_main_window.v
+end
+
+function GetNearestCoord(Array)
+    local x, y = getCharCoordinates(PLAYER_PED)
+    local distance = {}
+    for k, v in pairs(Array) do
+        distance[k] = {distance = math.floor(getDistanceBetweenCoords2d(v[1], v[2], x, y)), id = v[3], name = v[4], vx=v[1],vy=v[2]}
+    end
+    table.sort(distance, function(a, b) return a.distance < b.distance end)
+	if #distance ~= 0 then
+		local n = distance[1]
+		local id = n.id
+		local name = n.name
+		return n.vx,n.vy,id,name
+	end
+end
+
+function setCameraPos(a, b)
+    local z = b[1] - a[1]
+    local camZ = math.atan((b[2] - a[2]) / z)
+    if z >= 0.0 then
+        camZ = camZ + 3.14
+    end
+    setCameraPositionUnfixed(0.0, camZ)
+end
+
+function runTo(bx,by,cx,cy)
+	setCameraPos({bx,by},{cx,cy})
+	setGameKeyState(1,-256)
+	if jump_run.v then
+		timer = timer + 1
+		if timer > 200 then
+			setGameKeyState(14,-256)
+			timer = 0
+		else
+			setGameKeyState(14,0)
+			setGameKeyState(16,-256)
+		end
+	else
+		setGameKeyState(16,-256)
+	end
+end
+
+function main()
+	while not isSampAvailable() do wait(0) end
+	sampAddChatMessage("[ARZ] Бот на добычу хлопка/льна успешно загрузился!",-255)
+	sampRegisterChatCommand("botc", mode)
+	sampRegisterChatCommand("botclaps", laps)
+	sampRegisterChatCommand("botcmenu", showupmenu)
+	while true do 
+		wait(0)
+		imgui.Process = show_main_window.v
+		local res, pid = sampGetPlayerIdByCharHandle(PLAYER_PED)
+		local anim = sampGetPlayerAnimationId(pid)
+		if not found and active and lap ~= 0 then
+			for id = 0, 2048 do
+				local result = sampIs3dTextDefined(id)
+				if result then
+					local text, color, posX, posY = sampGet3dTextInfoById( id )
+					if string.match(text,"Для сбора урожая",0) then
+						local d = ""
+						if text:find("Хлопок") then
+							d = "Хлопок"
+							if clctctn.v then table.insert(matches,{posX,posY,id,d}) end
+						elseif text:find("Лён") then
+							d = "Лён"
+							if clctln.v then table.insert(matches,{posX,posY,id,d}) end
+						end
+					elseif string.match(text,"Осталось 0:0%d+",0) then
+						table.insert(fmatches,{posX,posY,123,"123"})
+					end
+				end
+			end
+			if #matches ~= 0 then
+				local lx,ly,id,name = GetNearestCoord(matches)
+				found = true
+				finding = false
+				ax,ay = lx,ly
+				tid = id
+				if name ~= "" then sampAddChatMessage("[ARZ] ".. name .." найден! Идем к нему!",-255) end
+			end
+			if #fmatches ~= 0 and not found then
+				local lx,ly,id,name = GetNearestCoord(fmatches)
+				finding = true
+				fx,fy = lx,ly
+			end
+		end
+		if not found and finding and active then
+			local x,y = getCharCoordinates(PLAYER_PED)
+			local dis = getDistanceBetweenCoords2d(x, y, fx, fy)
+			if dis > 6 then
+				runTo(x,y,fx,fy)
+			else
+				finding = false
+				fmatches = {}
+			end
+		end
+		if found and active then
+			local x,y = getCharCoordinates(PLAYER_PED)
+			local dis = getDistanceBetweenCoords2d(x, y, ax, ay)
+			if dis > 250 then
+				script:reload()
+			end
+			if dis > 2 then
+				runTo(x,y,ax,ay)
+			else
+				setGameKeyState(1,0)
+				local text, color = sampGet3dTextInfoById( tid )
+				if text == "" then found = false timer = 0 ax = 0 ay = 0 tid = 0 end
+				if string.match(text,"Для сбора урожая",0) then
+					if anim == 168 then
+						setGameKeyState(16,-256)
+					else
+						if anim ~= 1189 then
+							setGameKeyState(16,-256)
+						else
+							setGameKeyState(16,0)
+							wait(250)
+							setGameKeyState(16,-256)
+						end
+					end
+				else
+					wait(25)
+					found = false
+					timer = 0
+					lap = lap - 1
+					matches = {}
+					if lap ~= 0 then sampAddChatMessage("[ARZ] Осталось ещё кругов: "..lap.."!",-255) elseif lap == 0 then sampAddChatMessage("[ARZ] Круги закончились!",-255) collectcash = false end
+				end
+			end
+		end
+	end
+end
